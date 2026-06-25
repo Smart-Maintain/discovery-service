@@ -4,6 +4,11 @@ on:
   push:
     branches: [ "main", "master" ]
 
+# OBLIGATOIRE : Donne les droits d'écriture à la VM pour générer les rapports et signer avec Cosign
+permissions:
+  contents: write
+  id-token: write
+
 jobs:
   devsecops_pipeline:
     name: Chaîne de Sécurité & Signature
@@ -30,16 +35,33 @@ jobs:
       env:
         SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
+    # --- CORRECTION DE L'ERREUR MAVEN 429 ---
+    - name: Configurer Java et charger les dépendances Maven
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17' # Modifie par la version Java de ton projet si nécessaire (11, 21, etc.)
+        cache: 'maven'
+
+    # Résout les dépendances localement avant que Trivy ne passe pour éviter les requêtes HTTP bloquantes
+    - name: Télécharger les dépendances Maven (Mode Offline Préparation)
+      run: mvn dependency:go-offline || true
+
     - name: Scanner la configuration et fichiers (Trivy)
-      uses: aquasecurity/trivy-action@master
+      uses: aquasecurity/trivy-action@v0.20.0
       with:
         scan-type: 'fs'
         scan-ref: '.'
         format: 'json'
         output: 'trivy-results.json'
         exit-code: '0'
+        # Force Trivy à utiliser le cache Maven local pour ne pas interroger les dépôts distants
+        trivy-config: |
+          scan:
+            maven:
+              offline: true
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Géré automatiquement par GitHub
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     # ==========================================
     # ÉTAPE 2 : LOGINS, BUILD DOCKER & REGISTRY
@@ -55,7 +77,8 @@ jobs:
       with:
         context: .
         push: true
-        tags: ziayda/mon-microservice:latest # <-- CHANGER LE NOM DU MICROSERVICE ICI POUR CHAQUE REPO
+        # Utilise automatiquement le nom d'utilisateur configuré par Ziyad
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/discovery-service:latest # <-- Modifie "discovery-service" pour tes autres dépôts !
 
     # ==========================================
     # ÉTAPE 3 : SIGNATURE NUMÉRIQUE COSIGN
@@ -65,7 +88,7 @@ jobs:
 
     - name: Signer l'image Docker publiée
       run: |
-        cosign sign --yes --key env://COSIGN_PRIVATE_KEY ziayda/mon-microservice:latest
+        cosign sign --yes --key env://COSIGN_PRIVATE_KEY ${{ secrets.DOCKERHUB_USERNAME }}/discovery-service:latest
       env:
         COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_KEY }}
         COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
