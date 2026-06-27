@@ -4,7 +4,6 @@ on:
   push:
     branches: [ "main", "master" ]
 
-# OBLIGATOIRE : Donne les droits d'écriture à la VM pour générer les rapports et signer avec Cosign
 permissions:
   contents: write
   id-token: write
@@ -35,15 +34,13 @@ jobs:
       env:
         SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
-    # --- CORRECTION DE L'ERREUR MAVEN 429 ---
     - name: Configurer Java et charger les dépendances Maven
       uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
-        java-version: '17' # Modifie par la version Java de ton projet si nécessaire (11, 21, etc.)
+        java-version: '17'
         cache: 'maven'
 
-    # Résout les dépendances localement avant que Trivy ne passe pour éviter les requêtes HTTP bloquantes
     - name: Télécharger les dépendances Maven (Mode Offline Préparation)
       run: mvn dependency:go-offline || true
 
@@ -55,7 +52,6 @@ jobs:
         format: 'json'
         output: 'trivy-results.json'
         exit-code: '0'
-        # Force Trivy à utiliser le cache Maven local pour ne pas interroger les dépôts distants
         trivy-config: |
           scan:
             maven:
@@ -64,34 +60,33 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     # ==========================================
-    # ÉTAPE 2 : LOGINS, BUILD DOCKER & REGISTRY
+    # ÉTAPE 2 : LOGINS, BUILD DOCKER & REGISTRY (COMMENTÉ TEMPORAIREMENT)
     # ==========================================
-    - name: Connexion à Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    # - name: Connexion à Docker Hub
+    #   uses: docker/login-action@v3
+    #   with:
+    #     username: ${{ secrets.DOCKERHUB_USERNAME }}
+    #     password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Construire et Pousser l'image Docker
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: true
-        # Utilise automatiquement le nom d'utilisateur configuré par Ziyad
-        tags: ${{ secrets.DOCKERHUB_USERNAME }}/discovery-service:latest # <-- Modifie "discovery-service" pour tes autres dépôts !
+    # - name: Construire et Pousser l'image Docker
+    #   uses: docker/build-push-action@v5
+    #   with:
+    #     context: .
+    #     push: true
+    #     tags: ${{ secrets.DOCKERHUB_USERNAME }}/discovery-service:latest
 
     # ==========================================
-    # ÉTAPE 3 : SIGNATURE NUMÉRIQUE COSIGN
+    # ÉTAPE 3 : SIGNATURE NUMÉRIQUE COSIGN (COMMENTÉ TEMPORAIREMENT)
     # ==========================================
-    - name: Installer Cosign dans la VM Actions
-      uses: sigstore/cosign-installer@v3.5.0
+    # - name: Installer Cosign dans la VM Actions
+    #   uses: sigstore/cosign-installer@v3.5.0
 
-    - name: Signer l'image Docker publiée
-      run: |
-        cosign sign --yes --key env://COSIGN_PRIVATE_KEY ${{ secrets.DOCKERHUB_USERNAME }}/discovery-service:latest
-      env:
-        COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_KEY }}
-        COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+    # - name: Signer l'image Docker publiée
+    #   run: |
+    #     cosign sign --yes --key env://COSIGN_PRIVATE_KEY ${{ secrets.DOCKERHUB_USERNAME }}/discovery-service:latest
+    #   env:
+    #     COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_KEY }}
+    #     COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
 
     # ==========================================
     # ÉTAPE 4 : ANALYSE DES RESULTATS & ALERTE BOT TELEGRAM
