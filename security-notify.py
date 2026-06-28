@@ -1,29 +1,30 @@
 import os
 import json
 import requests
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
-def parse_semgrep():
-    details = []
+def parse_all_sources():
+    all_vulns = []
+    
+    # 1. Parsing SEMGREP
     try:
         with open('semgrep-results.json', 'r') as f:
             data = json.load(f)
-            results = data.get('results', [])
-            for r in results[:5]:  # On limite aux 5 premières pour éviter les messages trop longs
-                path = r.get('path', 'Fichier inconnu')
+            for r in data.get('results', []):
+                path = r.get('path', 'Inconnu')
                 line = r.get('start', {}).get('line', '?')
-                message = r.get('extra', {}).get('message', 'Pas de description').split('\n')[0]
-                details.append(f"⚠️ `{path}:{line}` -> {message}")
-            return len(results), details
+                msg = r.get('extra', {}).get('message', '').split('\n')[0]
+                all_vulns.append(["Semgrep", "HIGH", f"{path}:{line}", msg[:60]])
     except Exception:
-        return "Erreur", ["❌ Impossible de lire le rapport Semgrep"]
+        pass
 
-def parse_snyk():
-    details = []
+    # 2. Parsing SNYK (Prend absolument TOUT)
     try:
         with open('snyk-results.json', 'r') as f:
             data = json.load(f)
-            
-            # Gestion des différents formats de retour Snyk
             vulns_list = []
             if isinstance(data, list):
                 for repo in data:
@@ -31,85 +32,96 @@ def parse_snyk():
             else:
                 vulns_list = data.get('vulnerabilities', [])
                 
-            for v in vulns_list[:5]:
+            for v in vulns_list:
                 pkg = v.get('packageName', 'Inconnu')
-                version = v.get('version', '?')
-                title = v.get('title', 'Faille dépendance')
-                severity = v.get('severity', 'UNKNOWN').upper()
-                details.append(f"📦 *[{severity}]* `{pkg}@{version}` -> {title}")
-            return len(vulns_list), details
+                ver = v.get('version', '?')
+                title = v.get('title', 'Faille')
+                sev = v.get('severity', 'LOW').upper()
+                all_vulns.append(["Snyk (SCA)", sev, f"{pkg}@{ver}", title[:60]])
     except Exception:
-        return "Erreur", ["❌ Impossible de lire le rapport Snyk"]
+        pass
 
-def parse_trivy():
-    details = []
+    # 3. Parsing TRIVY
     try:
         with open('trivy-results.json', 'r') as f:
             data = json.load(f)
-            total_vulns = 0
             for result in data.get('Results', []):
-                vulns = result.get('Vulnerabilities', [])
-                total_vulns += len(vulns)
-                for v in vulns[:5]:
-                    target = result.get('Target', 'Fichier')
-                    vuln_id = v.get('VulnerabilityID', 'ID inconnu')
-                    severity = v.get('Severity', 'UNKNOWN')
-                    details.append(f"🐳 *[{severity}]* `{target}` -> {vuln_id}")
-            return total_vulns, details
+                target = result.get('Target', 'Fichier')
+                for v in result.get('Vulnerabilities', []):
+                    v_id = v.get('VulnerabilityID', 'Inconnu')
+                    sev = v.get('Severity', 'LOW').upper()
+                    title = v.get('Title', 'Faille config')
+                    all_vulns.append(["Trivy", sev, target, f"{v_id} - {title[:40]}"])
     except Exception:
-        return "Erreur", ["❌ Impossible de lire le rapport Trivy"]
+        pass
 
-def send_telegram_message(message):
+    return all_vulns
+
+def generate_pdf(vulns, filename="rapport-securite.pdf"):
+    doc = SimpleDocTemplate(filename, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    story = []
+    styles = getSampleStyleSheet()
+    
+    # Styles personnalisés
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=20, spaceAfter=20, textColor=colors.HexColor("#1A365D"))
+    text_style = ParagraphStyle('TextStyle', parent=styles['Normal'], fontSize=10, spaceAfter=10)
+    
+    story.append(Paragraph("Rapport Global Audits de Sécurité DevSecOps", title_style))
+    story.append(Paragraph(f"Projet : discovery-service-aerospace", text_style))
+    story.append(Paragraph(f"Total des vulnérabilités recensées : <b>{len(vulns)}</b>", text_style))
+    story.append(Spacer(1, 15))
+    
+    # En-tête du tableau
+    table_data = [["Outil", "Criticité", "Composant / Fichier", "Description / Faille"]]
+    
+    for v in vulns:
+        table_data.append(v)
+        
+    # Création du tableau avec mise en page automatique des cellules
+    formatted_table_data = []
+    for row in table_data:
+        formatted_row = [Paragraph(cell, styles['Normal']) if isinstance(cell, str) else cell for cell in row]
+        formatted_table_data.append(formatted_row)
+
+    t = Table(formatted_table_data, colWidths=[80, 60, 140, 260])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#1A365D")),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+        ('BOTTOMPADDING', (0,0), (-1,0), 8),
+        ('BACKGROUND', (0,1), (-1,-1), colors.HexColor("#F7FAFC")),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+    ]))
+    
+    story.append(t)
+    doc.build(story)
+
+def send_telegram_pdf(pdf_path, total_count):
     token = os.environ.get('TELEGRAM_BOT_TOKEN')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID')
     if not token or not chat_id:
         return
     
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "Markdown"
-    }
-    requests.post(url, json=payload)
+    # 1. Envoi du petit message texte d'alerte
+    text_url = f"https://api.telegram.org/bot{token}/sendMessage"
+    msg = f"🛡️ *Rapport de Sécurité DevSecOps*\n📌 *Projet:* `discovery-service-aerospace`\n\n🚨 L'analyse complète est terminée. *{total_count}* vulnérabilités globales ont été trouvées. Voir le PDF ci-joint pour le détail."
+    requests.post(text_url, json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"})
+    
+    # 2. Envoi du fichier PDF généré
+    doc_url = f"https://api.telegram.org/bot{token}/sendDocument"
+    with open(pdf_path, 'rb') as pdf_file:
+        files = {'document': pdf_file}
+        data = {'chat_id': chat_id}
+        requests.post(doc_url, data=data, files=files)
 
 if __name__ == "__main__":
-    semgrep_count, semgrep_details = parse_semgrep()
-    snyk_count, snyk_details = parse_snyk()
-    trivy_count, trivy_details = parse_trivy()
-
-    # Construction du message principal
-    msg = (
-        "🛡️ *Rapport de Sécurité Détaillé DevSecOps*\n"
-        "📌 *Projet :* `discovery-service-aerospace`\n"
-        "───────────────────────\n\n"
-    )
-
-    # Section Semgrep
-    msg += f"🔍 *Semgrep (SAST) :* `{semgrep_count}` trouvée(s)\n"
-    if semgrep_details:
-        msg += "\n".join(semgrep_details[:3]) + "\n"
-    else:
-        msg += "✔️ Aucun problème de code détecté.\n"
-    msg += "\n───────────────────────\n\n"
-
-    # Section Snyk
-    msg += f"📦 *Snyk (SCA) :* `{snyk_count}` détectée(s)\n"
-    if snyk_count != "Erreur" and snyk_details:
-        msg += "\n".join(snyk_details[:3]) + "\n"
-    elif snyk_count == "Erreur":
-        msg += f"{snyk_details[0]}\n"
-    else:
-        msg += "✔️ Vos dépendances Maven sont sûres.\n"
-    msg += "\n───────────────────────\n\n"
-
-    # Section Trivy
-    msg += f"🐳 *Trivy (Configuration) :* `{trivy_count}` détectée(s)\n"
-    if trivy_details:
-        msg += "\n".join(trivy_details[:3]) + "\n"
-    else:
-        msg += "✔️ Fichiers de configuration sains.\n"
+    vulns_list = parse_all_sources()
+    pdf_name = "rapport-securite.pdf"
     
-    msg += "\n🚀 _Pipeline exécuté. Analyse complète disponible sur GitHub._"
-
-    send_telegram_message(msg)
+    # Génère le PDF avec l'intégralité des lignes
+    generate_pdf(vulns_list, pdf_name)
+    
+    # Envoie le fichier sur Telegram
+    send_telegram_pdf(pdf_name, len(vulns_list))
+    print("PDF généré et envoyé avec succès !")
