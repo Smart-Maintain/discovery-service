@@ -29,8 +29,13 @@ jobs:
 
     - name: Configurer Snyk CLI
       uses: snyk/actions/setup@master
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
     - name: Scanner les dépendances (Snyk SCA)
-      run: snyk test --json-file-output=snyk-results.json || true
+      run: |
+        snyk auth ${{ secrets.SNYK_TOKEN }}
+        snyk test --json-file-output=snyk-results.json || true
       env:
         SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
