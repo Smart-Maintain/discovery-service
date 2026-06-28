@@ -109,7 +109,7 @@ jobs:
 
     - name: Exécuter le Script d'Analyse et Envoi Telegram
       run: |
-        pip install requests
+        pip install requests reportlab
         python security-notify.py
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
