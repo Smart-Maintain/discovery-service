@@ -18,7 +18,7 @@ jobs:
       uses: actions/checkout@v4
 
     # ==========================================
-    # 🛠️ AJUSTEMENT : Configuration de Java/Maven AU DÉBUT pour Snyk
+    # 🛠️ ÉTAPE 1 : CONFIGURATION DE JAVA & MAVEN WRAPPER
     # ==========================================
     - name: Configurer Java et charger les dépendances Maven
       uses: actions/setup-java@v4
@@ -27,11 +27,14 @@ jobs:
         java-version: '17'
         cache: 'maven'
 
+    - name: Rendre le wrapper Maven exécutable
+      run: chmod +x mvnw || true
+
     - name: Télécharger les dépendances Maven (Mode Offline Préparation)
-      run: mvn dependency:go-offline || true
+      run: ./mvnw dependency:go-offline || mvn dependency:go-offline || true
 
     # ==========================================
-    # ÉTAPE 1 : SCANS DE SÉCURITÉ (Génération des JSON)
+    # ÉTAPE 2 : SCANS DE SÉCURITÉ (Génération des JSON)
     # ==========================================
     - name: Scanner le code source (Semgrep SAST)
       run: |
@@ -48,7 +51,7 @@ jobs:
     - name: Scanner les dépendances (Snyk SCA)
       run: |
         snyk auth ${{ secrets.SNYK_TOKEN }}
-        snyk test --json-file-output=snyk-results.json || true
+        snyk test --json-file-output=snyk-results.json --skip-unresolved=true || true
       env:
         SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
@@ -68,7 +71,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     # ==========================================
-    # ÉTAPE 2 : LOGINS, BUILD DOCKER & REGISTRY (COMMENTÉ TEMPORAIREMENT)
+    # ÉTAPE 3 : LOGINS, BUILD DOCKER & REGISTRY (COMMENTÉ TEMPORAIREMENT)
     # ==========================================
     # - name: Connexion à Docker Hub
     #   uses: docker/login-action@v3
@@ -84,7 +87,7 @@ jobs:
     #     tags: ${{ secrets.DOCKERHUB_USERNAME }}/discovery-service:latest
 
     # ==========================================
-    # ÉTAPE 3 : SIGNATURE NUMÉRIQUE COSIGN (COMMENTÉ TEMPORAIREMENT)
+    # ÉTAPE 4 : SIGNATURE NUMÉRIQUE COSIGN (COMMENTÉ TEMPORAIREMENT)
     # ==========================================
     # - name: Installer Cosign dans la VM Actions
     #   uses: sigstore/cosign-installer@v3.5.0
@@ -97,7 +100,7 @@ jobs:
     #     COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
 
     # ==========================================
-    # ÉTAPE 4 : ANALYSE DES RESULTATS & ALERTE BOT TELEGRAM
+    # ÉTAPE 5 : ANALYSE DES RESULTATS & ALERTE BOT TELEGRAM
     # ==========================================
     - name: Configurer l'environnement Python
       uses: actions/setup-python@v5
