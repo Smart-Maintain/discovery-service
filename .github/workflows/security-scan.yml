@@ -18,6 +18,19 @@ jobs:
       uses: actions/checkout@v4
 
     # ==========================================
+    # 🛠️ AJUSTEMENT : Configuration de Java/Maven AU DÉBUT pour Snyk
+    # ==========================================
+    - name: Configurer Java et charger les dépendances Maven
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+        cache: 'maven'
+
+    - name: Télécharger les dépendances Maven (Mode Offline Préparation)
+      run: mvn dependency:go-offline || true
+
+    # ==========================================
     # ÉTAPE 1 : SCANS DE SÉCURITÉ (Génération des JSON)
     # ==========================================
     - name: Scanner le code source (Semgrep SAST)
@@ -38,16 +51,6 @@ jobs:
         snyk test --json-file-output=snyk-results.json || true
       env:
         SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-
-    - name: Configurer Java et charger les dépendances Maven
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '17'
-        cache: 'maven'
-
-    - name: Télécharger les dépendances Maven (Mode Offline Préparation)
-      run: mvn dependency:go-offline || true
 
     - name: Scanner la configuration et fichiers (Trivy)
       uses: aquasecurity/trivy-action@v0.20.0
