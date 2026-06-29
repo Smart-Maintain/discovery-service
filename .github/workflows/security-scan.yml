@@ -4,8 +4,12 @@ on:
   push:
     branches: [ "main", "master" ]
 
+# ========================================================
+# 🔑 CONFIGURATION DES PERMISSIONS
+# ========================================================
 permissions:
   contents: write
+  packages: write  # Donne l'autorisation essentielle de créer et pousser l'image sur GHCR
   id-token: write
 
 jobs:
@@ -24,7 +28,7 @@ jobs:
       uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
-        java-version: '17'
+        java-version: '21'  # Aligné sur Java 21 pour éviter les erreurs de compilation
         cache: 'maven'
 
     - name: Rendre le wrapper Maven exécutable
@@ -71,33 +75,44 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     # ==========================================
-    # ÉTAPE 3 : LOGINS, BUILD DOCKER & REGISTRY (COMMENTÉ TEMPORAIREMENT)
+    # ÉTAPE 3 : LOGINS & BUILD DOCKER SUR GHCR
     # ==========================================
-    # - name: Connexion à Docker Hub
-    #   uses: docker/login-action@v3
-    #   with:
-    #     username: ${{ secrets.DOCKERHUB_USERNAME }}
-    #     password: ${{ secrets.DOCKERHUB_TOKEN }}
+    - name: Connexion à GitHub Container Registry (GHCR)
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
-    # - name: Construire et Pousser l'image Docker
-    #   uses: docker/build-push-action@v5
-    #   with:
-    #     context: .
-    #     push: true
-    #     tags: ${{ secrets.DOCKERHUB_USERNAME }}/discovery-service:latest
+    - name: Compiler l'application Java (Génération du fichier JAR)
+      run: |
+        ./mvnw clean package -DskipTests || mvn clean package -DskipTests
+
+    - name: Construire et Pousser l'image Docker vers GHCR
+      run: |
+        # 1. Récupération et conversion automatique du nom du repo actuel en minuscules
+        IMAGE_NAME=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+        
+        # 2. Build de l'image
+        docker build -t $IMAGE_NAME:latest .
+        
+        # 3. Push vers GHCR
+        docker push $IMAGE_NAME:latest
 
     # ==========================================
-    # ÉTAPE 4 : SIGNATURE NUMÉRIQUE COSIGN (COMMENTÉ TEMPORAIREMENT)
+    # ÉTAPE 4 : SIGNATURE NUMÉRIQUE COSIGN SUR GHCR
     # ==========================================
-    # - name: Installer Cosign dans la VM Actions
-    #   uses: sigstore/cosign-installer@v3.5.0
+    - name: Installer Cosign dans la VM Actions
+      uses: sigstore/cosign-installer@v3.5.0
 
-    # - name: Signer l'image Docker publiée
-    #   run: |
-    #     cosign sign --yes --key env://COSIGN_PRIVATE_KEY ${{ secrets.DOCKERHUB_USERNAME }}/discovery-service:latest
-    #   env:
-    #     COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_KEY }}
-    #     COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+    - name: Signer l'image Docker publiée sur GHCR
+      run: |
+        IMAGE_NAME=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+        
+        cosign sign --yes --key env://COSIGN_PRIVATE_KEY $IMAGE_NAME:latest
+      env:
+        COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_KEY }}
+        COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
 
     # ==========================================
     # ÉTAPE 5 : ANALYSE DES RESULTATS & ALERTE BOT TELEGRAM
@@ -110,7 +125,7 @@ jobs:
     - name: Exécuter le Script d'Analyse et Envoi Telegram
       run: |
         pip install requests reportlab
-        python security-notify.py
+        python "$GITHUB_WORKSPACE/security-notify.py"
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
